@@ -220,13 +220,13 @@ func (p *Port) ResetOutputBuffer() error {
 }
 
 func (p *Port) Break(d time.Duration) error {
-	if err := windows.SetCommBreak(p.internal.handle); err != nil {
+	if err := windows.SetCommBreak(windows.Handle(p.internal.handle)); err != nil {
 		return &PortError{wrapped: err}
 	}
 
 	time.Sleep(d)
 
-	if err := windows.ClearCommBreak(p.internal.handle); err != nil {
+	if err := windows.ClearCommBreak(windows.Handle(p.internal.handle)); err != nil {
 		return &PortError{wrapped: err}
 	}
 

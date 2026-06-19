@@ -428,12 +428,22 @@ func (p *Port) reconfigure() error {
 		return &PortError{code: InvalidSerialPort, wrapped: err}
 	}
 	params.Flags &= dcbRTSControlDisableMask
-	params.Flags |= dcbRTSControlEnable
+	if p.ctsRts {
+		// Hardware flow control: let the driver drive RTS as a
+		// receive-buffer handshake and honour CTS on transmit.
+		params.Flags |= dcbRTSControlHandshake
+	} else {
+		params.Flags |= dcbRTSControlEnable
+	}
 	params.Flags &= dcbDTRControlDisableMask
 	if p.hupcl {
 		params.Flags |= dcbDTRControlEnable
 	}
-	params.Flags &^= dcbOutXCTSFlow
+	if p.ctsRts {
+		params.Flags |= dcbOutXCTSFlow
+	} else {
+		params.Flags &^= dcbOutXCTSFlow
+	}
 	params.Flags &^= dcbOutXDSRFlow
 	params.Flags &^= dcbDSRSensitivity
 	params.Flags |= dcbTXContinueOnXOFF

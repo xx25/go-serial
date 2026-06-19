@@ -60,6 +60,7 @@ type Port struct {
 	parity   Parity   // Parity (see Parity type for more info)
 	stopBits StopBits // Stop bits (see StopBits type for more info)
 	hupcl    bool     // Lower DTR line on close (hang up)
+	ctsRts   bool     // Hardware (RTS/CTS) flow control
 
 	internal *port // os specific (implementation like os.File)
 }
@@ -90,6 +91,7 @@ func newWithDefaults(n string, p *port) *Port {
 		parity:   NoParity,
 		stopBits: OneStopBit,
 		hupcl:    false,
+		ctsRts:   false,
 		internal: p,
 	}
 }

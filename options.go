@@ -50,3 +50,17 @@ func WithHUPCL(o bool) Option {
 		p.hupcl = o
 	}
 }
+
+// WithCtsRts enables (o=true) or disables (o=false) hardware RTS/CTS
+// flow control on the port. The default is false (no flow control),
+// preserving the historical behaviour of this library. When enabled,
+// reconfigure() sets the platform flow-control flags (CRTSCTS on
+// termios platforms; RTS-handshake + OutxCtsFlow on Windows) so the
+// kernel pauses transmission when the DCE deasserts CTS and asserts
+// RTS to throttle the peer — required for reliable bulk transfers over
+// a real modem whose DTE/DCE rates differ.
+func WithCtsRts(o bool) Option {
+	return func(p *Port) {
+		p.ctsRts = o
+	}
+}

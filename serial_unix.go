@@ -431,8 +431,11 @@ func (p *Port) reconfigure() error {
 		return err
 	}
 	s.setRawMode(p.hupcl)
-	// Explicitly disable RTS/CTS flow control
-	s.setCtsRts(false)
+	// Apply the requested RTS/CTS flow-control state. setRawMode
+	// already cleared the software-flow (IXON/IXOFF) bits, so this is
+	// the only flow-control knob: true enables hardware (CRTSCTS),
+	// false leaves it disabled (the historical default).
+	s.setCtsRts(p.ctsRts)
 
 	return p.applyTermSettings(s) // already returned PortError
 }

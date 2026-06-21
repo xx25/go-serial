@@ -109,3 +109,11 @@ func (e PortError) Cause() error {
 func newPortOSError(err error) *PortError {
 	return &PortError{code: OsError, wrapped: err}
 }
+
+// NewPortError builds a *PortError with the given code, optionally
+// wrapping a cause. Exported so callers (and their tests) can construct
+// and classify the same error values the package returns — the code is
+// otherwise only readable via Code(), with no way to synthesise one.
+func NewPortError(code PortErrorCode, cause error) *PortError {
+	return &PortError{code: code, wrapped: cause}
+}

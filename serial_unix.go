@@ -74,7 +74,13 @@ func Open(name string, opts ...Option) (*Port, error) {
 		return nil, p.closeAndReturnError(InvalidSerialPort, err)
 	}
 
-	if err = unix.SetNonblock(h, false); err != nil {
+	// Keep the fd NON-blocking. Both Read and Write select(2) on the
+	// handle (plus the close-pipe) before touching it, so read/write never
+	// need to block in the syscall — and a non-blocking write is what lets
+	// Write return EAGAIN and re-evaluate instead of parking in the kernel
+	// when the peer has deasserted CTS (hardware flow control). With a
+	// blocking fd that kernel park is unbreakable by Close(); see Write.
+	if err = unix.SetNonblock(h, true); err != nil {
 		return nil, p.closeAndReturnError(OsError, err)
 	}
 
@@ -165,6 +171,18 @@ func (p *Port) Read(b []byte) (int, error) {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
+			// The fd is non-blocking: select reported the handle readable,
+			// but a racing reader (or a spurious wakeup) may have drained
+			// it first, yielding EAGAIN here. Treat that as "no data this
+			// turn" and re-evaluate against the deadline rather than
+			// surfacing it as an error.
+			if errors.Is(err, unix.EAGAIN) {
+				now = time.Now()
+				if !now.Before(deadline) {
+					return read, nil
+				}
+				continue
+			}
 			return read, newPortOSError(err)
 		}
 
@@ -190,29 +208,35 @@ func (p *Port) Write(b []byte) (int, error) {
 	}
 
 	size, written := len(b), 0
-	fds := unixutils.NewFDSet(p.internal.handle)
+	wrFds := unixutils.NewFDSet(p.internal.handle)
 	clFds := unixutils.NewFDSet(p.internal.closePipeR)
 
+	// writeTimeout == 0 means "no overall deadline": keep going until every
+	// byte is written. writeTimeout > 0 caps the whole call.
+	hasDeadline := p.internal.writeTimeout > 0
 	deadline := time.Now().Add(time.Duration(p.internal.writeTimeout) * time.Millisecond)
 
 	for written < size {
-		n, err := unix.Write(p.internal.handle, b[written:])
+		// Select for writability OR the close-pipe BEFORE writing — the
+		// mirror of Read. This is what makes a write breakable: the
+		// non-blocking fd never parks us in unix.Write, and a concurrent
+		// Close() writes closePipeW to wake this select even when the modem
+		// has deasserted CTS and will accept no bytes. A negative timeout
+		// blocks indefinitely (goselect passes a nil timeval); a positive
+		// one bounds the wait so SetWriteTimeout callers regain control.
+		timeout := time.Duration(-1)
+		if hasDeadline {
+			timeout = time.Until(deadline)
+			if timeout <= 0 {
+				return written, &PortError{code: WriteFailed}
+			}
+		}
+
+		res, err := unixutils.Select(clFds, wrFds, wrFds, timeout)
 		if err != nil {
-			return written, newPortOSError(err)
-		}
-
-		if p.internal.writeTimeout == 0 {
-			return n, nil
-		}
-
-		written += n
-		now := time.Now()
-		if p.internal.writeTimeout > 0 && !now.Before(deadline) {
-			return written, nil
-		}
-
-		res, err := unixutils.Select(clFds, fds, fds, deadline.Sub(now))
-		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
 			return written, newPortOSError(err)
 		}
 
@@ -221,8 +245,23 @@ func (p *Port) Write(b []byte) (int, error) {
 		}
 
 		if !res.IsWritable(p.internal.handle) {
+			// Reachable only with a finite deadline: select timed out with
+			// the port still not writable. Report no-progress; SetWriteTimeout
+			// callers treat this as a poll tick, not a fatal error.
 			return written, &PortError{code: WriteFailed}
 		}
+
+		// Writable: a non-blocking write returns what fit and never parks.
+		// A racing fill can still yield EAGAIN here — re-select rather than
+		// erroring.
+		n, err := unix.Write(p.internal.handle, b[written:])
+		if err != nil {
+			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.EAGAIN) {
+				continue
+			}
+			return written, newPortOSError(err)
+		}
+		written += n
 	}
 	return written, nil
 }
